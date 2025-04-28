@@ -1,4 +1,4 @@
-GORELEASER_BIN ?= https://github.com/goreleaser/goreleaser/releases/download/v1.5.0/goreleaser_Linux_x86_64.tar.gz
+GORELEASER_BIN ?= https://github.com/goreleaser/goreleaser/releases/download/v1.26.2/goreleaser_Linux_x86_64.tar.gz
 REVIVE_BIN ?= https://github.com/mgechev/revive/releases/download/v1.1.4/revive_1.1.4_Linux_x86_64.tar.gz
 PROTOC_BIN ?= https://github.com/protocolbuffers/protobuf/releases/download/v3.19.4/protoc-3.19.4-linux-x86_64.zip
 
@@ -77,7 +77,7 @@ test/docker: bin/protoc tmp/googleapis release/snapshot ## Run the docker e2e te
 
 release/snapshot: bin/goreleaser ## Create a local release snapshot
 	@echo "$(CYAN)Creating snapshot build...$(CLEAR)"
-	@bin/goreleaser --snapshot --rm-dist
+	@bin/goreleaser --snapshot --clean
 
 release/validate: bin/goreleaser ## Run goreleaser checks
 	@echo "$(CYAN)Validating release...$(CLEAR)"
