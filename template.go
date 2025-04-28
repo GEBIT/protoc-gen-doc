@@ -3,6 +3,7 @@ package gendoc
 import (
 	"encoding/json"
 	"fmt"
+	// "os"
 	"sort"
 	"strings"
 
@@ -51,12 +52,31 @@ func NewTemplate(descs []*protokit.FileDescriptor) *Template {
 		// Recursively add nested types from messages
 		var addFromMessage func(*protokit.Descriptor)
 		addFromMessage = func(m *protokit.Descriptor) {
-			file.Messages = append(file.Messages, parseMessage(m))
+			// map with field descriptors of key and value for proto maps
+			// key: the name of the artificial map entry message
+			// value: array with field descriptors for key and value 
+			mapKeyAndValueFields := make(map[string][2]*protokit.FieldDescriptor)
+
+			for _, n := range m.Messages {
+				if n.GetOptions().GetMapEntry() {
+					// in case we have an artificial map entry message we do NOT add this to the list of messages
+					// instead we extract key and value field descriptors and put these in a map for further usage
+					// fmt.Fprintf(os.Stderr, "%s\n", n.GetName())
+					mapKeyField := n.GetMessageField("key")
+					mapValueField := n.GetMessageField("value")
+					if mapKeyField != nil && mapValueField != nil {
+						// fmt.Fprintf(os.Stderr, "  key:   %s\n", mapKeyField)
+						// fmt.Fprintf(os.Stderr, "  value: %s\n", mapValueField)
+						mapKeyAndValueFields[n.GetName()] = [2]*protokit.FieldDescriptor{mapKeyField, mapValueField}
+					}
+				} else {
+					addFromMessage(n)
+				}
+			}
+
+			file.Messages = append(file.Messages, parseMessage(m, mapKeyAndValueFields))
 			for _, e := range m.Enums {
 				file.Enums = append(file.Enums, parseEnum(e))
-			}
-			for _, n := range m.Messages {
-				addFromMessage(n)
 			}
 		}
 		for _, m := range f.Messages {
@@ -231,6 +251,10 @@ type MessageField struct {
 	LongType     string `json:"longType"`
 	FullType     string `json:"fullType"`
 	IsMap        bool   `json:"ismap"`
+	// quick hack: added type infos for keys, only filled in case of a map
+	KeyType      string `json:"keyType,omitempty"`
+	KeyLongType  string `json:"keyLongType,omitempty"`
+	KeyFullType  string `json:"keyFullType,omitempty"`
 	IsOneof      bool   `json:"isoneof"`
 	OneofDecl    string `json:"oneofdecl"`
 	DefaultValue string `json:"defaultValue"`
@@ -435,7 +459,7 @@ func parseFileExtension(pe *protokit.ExtensionDescriptor) *FileExtension {
 	}
 }
 
-func parseMessage(pm *protokit.Descriptor) *Message {
+func parseMessage(pm *protokit.Descriptor, mapKeyAndValueFields map[string][2]*protokit.FieldDescriptor) *Message {
 	msg := &Message{
 		Name:          pm.GetName(),
 		LongName:      pm.GetLongName(),
@@ -454,7 +478,7 @@ func parseMessage(pm *protokit.Descriptor) *Message {
 	}
 
 	for _, f := range pm.Fields {
-		msg.Fields = append(msg.Fields, parseMessageField(f, pm.GetOneofDecl()))
+		msg.Fields = append(msg.Fields, parseMessageField(f, pm.GetOneofDecl(), mapKeyAndValueFields))
 	}
 
 	return msg
@@ -469,7 +493,7 @@ func parseMessageExtension(pe *protokit.ExtensionDescriptor) *MessageExtension {
 	}
 }
 
-func parseMessageField(pf *protokit.FieldDescriptor, oneofDecls []*descriptor.OneofDescriptorProto) *MessageField {
+func parseMessageField(pf *protokit.FieldDescriptor, oneofDecls []*descriptor.OneofDescriptorProto, mapKeyAndValueFields map[string][2]*protokit.FieldDescriptor) *MessageField {
 	t, lt, ft := parseType(pf)
 
 	m := &MessageField{
@@ -488,15 +512,27 @@ func parseMessageField(pf *protokit.FieldDescriptor, oneofDecls []*descriptor.On
 		m.OneofDecl = oneofDecls[pf.GetOneofIndex()].GetName()
 	}
 
-	// Check if this is a map.
-	// See https://github.com/golang/protobuf/blob/master/protoc-gen-go/descriptor/descriptor.pb.go#L1556
-	// for more information
-	if m.Label == "repeated" &&
-		strings.Contains(m.LongType, ".") &&
-		strings.HasSuffix(m.Type, "Entry") &&
-		strings.HasSuffix(m.LongType, "Entry") &&
-		strings.HasSuffix(m.FullType, "Entry") {
+	// Handling if this field is a map
+	// You cannot decide this if you just look at the field itself,
+	// in particular the referenced message is NOT the value of the map :-/.
+	// You need to look at the message referenced by this field.
+	// This referenced message
+	// * has the map_entry option
+	// * contains a field named key which contains the actual key of the map
+	// * contains a field named value which contains the actual value of the map
+	keyAndValueField, exists := mapKeyAndValueFields[t]
+	if exists {
 		m.IsMap = true
+
+		kt, klt, kft := parseType(keyAndValueField[0])
+		m.KeyType = kt
+		m.KeyLongType = klt
+		m.KeyFullType = kft
+
+		vt, vlt, vft := parseType(keyAndValueField[1])
+		m.Type = vt
+		m.LongType = vlt
+		m.FullType = vft
 	}
 
 	return m
